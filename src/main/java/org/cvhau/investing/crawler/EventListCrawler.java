@@ -3,7 +3,6 @@ package org.cvhau.investing.crawler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
-import java.lang.reflect.Array;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -15,8 +14,19 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class EventCrawler {
+public class EventListCrawler {
+    public static final String INVESTING_BASE_URL = "https://www.investing.com";
     public static final String DATA_BASE_URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData";
+
+    private final EventDetailCrawler eventDetailCrawler;
+
+    public EventListCrawler() {
+        this(new EventDetailCrawler());
+    }
+
+    public EventListCrawler(EventDetailCrawler eventDetailCrawler) {
+        this.eventDetailCrawler = eventDetailCrawler;
+    }
 
     public void crawl() throws IOException, InterruptedException {
         HttpClient client = HttpClient.newBuilder()
@@ -69,6 +79,24 @@ public class EventCrawler {
             String eventAttrId = extractEventAttrId(e);
             String eventCountry = extractEventCountry(e);
             String eventName = extractEventName(e);
+            boolean isHoliday = false;
+
+            if (eventAttrId.isEmpty()) {
+                isHoliday = checkEventIsHoliday(e);
+            }
+
+            String eventDetailUrl = extractEventDetailUrl(e);
+
+            EventDetail eventDetail = null;
+
+            if (!eventDetailUrl.isEmpty()) {
+                try {
+                    Thread.sleep(7000);
+                    eventDetail = eventDetailCrawler.crawl(eventDetailUrl);
+                } catch (Exception exception) {
+                    exception.printStackTrace();
+                }
+            }
 
             String eventId = eventRowId;
             if (!eventAttrId.isEmpty()) {
@@ -79,11 +107,18 @@ public class EventCrawler {
             System.out.println(eventCountry);
             System.out.println(eventId);
             System.out.println(eventName);
-            System.out.println(e);
+            System.out.printf("Holiday: %s\n", isHoliday);
+            System.out.println(eventDetailUrl);
+            if (eventDetail != null) {
+                System.out.printf("Detail Title: %s\n", eventDetail.getDetailTitle());
+                System.out.printf("Description: %s\n", eventDetail.getDescription());
+                System.out.printf("Source name: %s\n", eventDetail.getSource().getName());
+                System.out.printf("Source URL: %s\n", eventDetail.getSource().getUrl());
+            }
         });
     }
 
-    public String extractEventRowId(String eventRowHtml) {
+    private String extractEventRowId(String eventRowHtml) {
         String regex = "<tr[^>]* id=\"eventRowId_([0-9]+)\"[^>]*>";
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(eventRowHtml);
@@ -95,7 +130,7 @@ public class EventCrawler {
         return "";
     }
 
-    public String extractEventAttrId(String eventRowHtml) {
+    private String extractEventAttrId(String eventRowHtml) {
         String regex = "<tr[^>]* event_attr_ID=\"([0-9]+)\"[^>]*>";
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(eventRowHtml);
@@ -107,7 +142,7 @@ public class EventCrawler {
         return "";
     }
 
-    public String extractEventCountry(String eventRowHtml) {
+    private String extractEventCountry(String eventRowHtml) {
         String regex = "<span[^>]* title=\"([^\"]+)\"[^>]*>";
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(eventRowHtml);
@@ -119,7 +154,7 @@ public class EventCrawler {
         return "";
     }
 
-    public String extractEventName(String eventRowHtml) {
+    private String extractEventName(String eventRowHtml) {
         String regex = "<td[^>]* class=\"[^\"]*event\"[^>]*>(.+?)</td>";
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(eventRowHtml);
@@ -137,13 +172,35 @@ public class EventCrawler {
             for (String yearQuarter: yearQuarters) {
                 eventName = eventName.replace(String.format("(%s)", yearQuarter), "");
             }
+            eventName = eventName.replace("&nbsp;", "");
             eventName = eventName.trim();
         }
 
         return eventName;
     }
 
-    public String requestPayload() {
+    private boolean checkEventIsHoliday(String eventRowHtml) {
+        String regex = "holiday";
+        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL|Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(eventRowHtml);
+        return matcher.find();
+    }
+
+    private String extractEventDetailUrl(String eventRowHtml) {
+        String regex = "<a.+?href=\"([^\"]+)\"";
+        Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(eventRowHtml);
+        String eventDetailUrl = "";
+
+        if (matcher.find()) {
+            String eventDetailUri = matcher.group(1);
+            eventDetailUrl = String.format("%s/%s", INVESTING_BASE_URL, eventDetailUri.replaceFirst("^/", ""));
+        }
+
+        return eventDetailUrl;
+    }
+
+    private String requestPayload() {
         List<Integer> countries = Arrays.asList(
                 95,86,29,25,54,114,145,47,34,174,163,32,70,6,232,27,
                 37,122,15,78,113,107,55,24,121,59,89,72,71,22,17,74,
@@ -162,8 +219,8 @@ public class EventCrawler {
 
 //        formData.put("currentTab", "today");
         formData.put("currentTab", "custom");
-        formData.put("dateFrom", "2023-02-23");
-        formData.put("dateTo", "2023-02-23");
+        formData.put("dateFrom", "2023-02-20");
+        formData.put("dateTo", "2023-02-20");
 
         formData.put("submitFilters", 1);
         formData.put("limit_from", 0);
@@ -186,11 +243,11 @@ public class EventCrawler {
         return payload.toString();
     }
 
-    public List<String> months() {
+    private List<String> months() {
         return List.of("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec");
     }
 
-    public List<String> yearQuarters() {
+    private List<String> yearQuarters() {
         return List.of("Q1", "Q2", "Q3", "Q4");
     }
 }
