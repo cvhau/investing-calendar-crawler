@@ -1,7 +1,9 @@
 package org.cvhau.investing.crawler;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.NonNull;
 
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -10,7 +12,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -18,7 +23,11 @@ public class EventListCrawler {
     public static final String INVESTING_BASE_URL = "https://www.investing.com";
     public static final String DATA_BASE_URL = "https://www.investing.com/economic-calendar/Service/getCalendarFilteredData";
 
+    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE;
+
     private final EventDetailCrawler eventDetailCrawler;
+    private final AtomicBoolean crawled;
+    private final Set<String> crawledNames;
 
     public EventListCrawler() {
         this(new EventDetailCrawler());
@@ -26,9 +35,23 @@ public class EventListCrawler {
 
     public EventListCrawler(EventDetailCrawler eventDetailCrawler) {
         this.eventDetailCrawler = eventDetailCrawler;
+        crawled = new AtomicBoolean(false);
+        crawledNames = new TreeSet<>();
     }
 
-    public void crawl() throws IOException, InterruptedException {
+    public void setToCrawled(Event event) {
+        this.crawledNames.add(String.format("%s-%s-%s", event.getId(), event.getCountry(), event.getTitle()));
+    }
+
+    public boolean hasCrawled(Event event) {
+        return this.crawledNames.contains(String.format("%s-%s-%s", event.getId(), event.getCountry(), event.getTitle()));
+    }
+
+    public void crawl(LocalDate date) throws IOException, InterruptedException {
+        System.out.println();
+        System.out.println("======================================");
+        System.out.printf("Crawling data on date: %s\n", date.format(DATE_TIME_FORMATTER));
+
         HttpClient client = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -40,8 +63,14 @@ public class EventListCrawler {
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .header("X-Requested-With", "XMLHttpRequest")
                 .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36")
-                .POST(HttpRequest.BodyPublishers.ofString(requestPayload()))
+                .POST(HttpRequest.BodyPublishers.ofString(requestPayload(date)))
                 .build();
+
+        if (crawled.get()) {
+            Thread.sleep(8000);
+        } else {
+            crawled.set(true);
+        }
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
@@ -74,48 +103,56 @@ public class EventListCrawler {
             }
         }
 
-        eventRowsHtml.forEach(e -> {
-            String eventRowId = extractEventRowId(e);
-            String eventAttrId = extractEventAttrId(e);
-            String eventCountry = extractEventCountry(e);
-            String eventName = extractEventName(e);
-            boolean isHoliday = false;
+        for(String e: eventRowsHtml) {
+            Event event = new Event();
 
-            if (eventAttrId.isEmpty()) {
-                isHoliday = checkEventIsHoliday(e);
+            event.setId(extractEventRowId(e));
+            event.setAttrId(extractEventAttrId(e));
+            event.setCountry(extractEventCountry(e));
+            event.setImpact(extractEventImpact(e));
+            event.setTitle(extractEventTitle(e));
+
+            if (event.getImpact() < 3) {
+                continue;
             }
 
-            String eventDetailUrl = extractEventDetailUrl(e);
+            if (hasCrawled(event)) {
+                continue;
+            }
 
-            EventDetail eventDetail = null;
+            if (event.getAttrId().isEmpty()) {
+                event.setHoliday(checkEventIsHoliday(e));
+            }
 
-            if (!eventDetailUrl.isEmpty()) {
+            Optional<String> eventDetailUrl = extractEventDetailUrl(e);
+            eventDetailUrl.ifPresent(url -> {
                 try {
-                    Thread.sleep(7000);
-                    eventDetail = eventDetailCrawler.crawl(eventDetailUrl);
+                    Thread.sleep(8000);
+                    event.setDetail(eventDetailCrawler.crawl(url));
                 } catch (Exception exception) {
-                    exception.printStackTrace();
+                    throw new RuntimeException(exception);
                 }
-            }
-
-            String eventId = eventRowId;
-            if (!eventAttrId.isEmpty()) {
-                eventId += "_" + eventAttrId;
-            }
+            });
 
             System.out.println("======================================");
-            System.out.println(eventCountry);
-            System.out.println(eventId);
-            System.out.println(eventName);
-            System.out.printf("Holiday: %s\n", isHoliday);
-            System.out.println(eventDetailUrl);
-            if (eventDetail != null) {
-                System.out.printf("Detail Title: %s\n", eventDetail.getDetailTitle());
-                System.out.printf("Description: %s\n", eventDetail.getDescription());
-                System.out.printf("Source name: %s\n", eventDetail.getSource().getName());
-                System.out.printf("Source URL: %s\n", eventDetail.getSource().getUrl());
-            }
-        });
+            System.out.printf("Source ID: %s\n", event.getSourceId());
+            System.out.printf("Country: %s\n", event.getCountry().orElse(""));
+            System.out.printf("Title: %s\n", event.getTitle());
+            System.out.printf("Impact: %s\n", event.getImpact());
+            System.out.printf("Holiday: %s\n", event.isHoliday());
+            System.out.printf("Detail URL: %s\n", eventDetailUrl.orElse(""));
+            event.getDetail().ifPresent(eventDetail -> {
+                System.out.printf("Detail Title: %s\n", eventDetail.getDetailTitle().orElse(""));
+                System.out.printf("Description: %s\n", eventDetail.getDescription().orElse(""));
+                EventSource eventSource = eventDetail.getSource().orElse(new EventSource("", ""));
+                System.out.printf("Source name: %s\n", eventSource.getName());
+                System.out.printf("Source URL: %s\n", eventSource.getUrl());
+            });
+
+            writeDataToCSV(event);
+
+            setToCrawled(event);
+        }
     }
 
     private String extractEventRowId(String eventRowHtml) {
@@ -139,7 +176,7 @@ public class EventListCrawler {
             return matcher.group(1);
         }
 
-        return "";
+        return null;
     }
 
     private String extractEventCountry(String eventRowHtml) {
@@ -151,10 +188,23 @@ public class EventListCrawler {
             return matcher.group(1);
         }
 
-        return "";
+        return null;
     }
 
-    private String extractEventName(String eventRowHtml) {
+    private int extractEventImpact(String eventRowHtml) {
+        String regex = "(grayFullBullishIcon)";
+        Pattern pattern = Pattern.compile(regex, Pattern.MULTILINE);
+        Matcher matcher = pattern.matcher(eventRowHtml);
+        int impact = 0;
+
+        while (matcher.find()) {
+            impact ++;
+        }
+
+        return impact;
+    }
+
+    private String extractEventTitle(String eventRowHtml) {
         String regex = "<td[^>]* class=\"[^\"]*event\"[^>]*>(.+?)</td>";
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(eventRowHtml);
@@ -186,21 +236,21 @@ public class EventListCrawler {
         return matcher.find();
     }
 
-    private String extractEventDetailUrl(String eventRowHtml) {
+    private Optional<String> extractEventDetailUrl(String eventRowHtml) {
         String regex = "<a.+?href=\"([^\"]+)\"";
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(eventRowHtml);
-        String eventDetailUrl = "";
+        String eventDetailUrl = null;
 
         if (matcher.find()) {
             String eventDetailUri = matcher.group(1);
             eventDetailUrl = String.format("%s/%s", INVESTING_BASE_URL, eventDetailUri.replaceFirst("^/", ""));
         }
 
-        return eventDetailUrl;
+        return Optional.ofNullable(eventDetailUrl);
     }
 
-    private String requestPayload() {
+    private String requestPayload(LocalDate date) {
         List<Integer> countries = Arrays.asList(
                 95,86,29,25,54,114,145,47,34,174,163,32,70,6,232,27,
                 37,122,15,78,113,107,55,24,121,59,89,72,71,22,17,74,
@@ -218,9 +268,10 @@ public class EventListCrawler {
         formData.put("timeFilter", "timeRemain");
 
 //        formData.put("currentTab", "today");
+        String formattedDate = date.format(DATE_TIME_FORMATTER);
         formData.put("currentTab", "custom");
-        formData.put("dateFrom", "2023-02-20");
-        formData.put("dateTo", "2023-02-20");
+        formData.put("dateFrom", formattedDate);
+        formData.put("dateTo", formattedDate);
 
         formData.put("submitFilters", 1);
         formData.put("limit_from", 0);
@@ -249,5 +300,38 @@ public class EventListCrawler {
 
     private List<String> yearQuarters() {
         return List.of("Q1", "Q2", "Q3", "Q4");
+    }
+
+    private void writeDataToCSV(Event event) throws IOException {
+        String filenameHighStars = "/home/cvhau/Documents/investing_events.csv";
+        String filename = "/home/cvhau/Documents/investing_events_all.csv";
+        String dataLine = buildCsvLine(event);
+
+        writeDataToCSV(filename, dataLine);
+
+        if (event.getImpact() > 2) {
+            writeDataToCSV(filenameHighStars, dataLine);
+        }
+    }
+
+    private @NonNull String buildCsvLine(@NonNull Event event) {
+        StringBuilder line = new StringBuilder();
+        line.append('"').append(event.getSourceId()).append('"').append(',');
+        line.append('"').append(event.getImpact()).append('"').append(',');
+        line.append('"').append(event.getCountry().orElse("")).append('"').append(',');
+        line.append('"').append(event.getTitle()).append('"').append(',');
+
+        EventDetail eventDetail = event.getDetail().orElse(new EventDetail("", "", null));
+        line.append('"').append(eventDetail.getDetailTitle().orElse("")).append('"').append(',');
+        line.append('"').append(eventDetail.getDescription().orElse("").replaceAll("\n", "<br/>").replace("\"", "\"\"")).append('"').append('\n');
+
+        return line.toString();
+    }
+
+    private void writeDataToCSV(@NonNull String filename, @NonNull String dataLine) throws IOException {
+        try(FileOutputStream fos = new FileOutputStream(filename, true)) {
+            fos.write(dataLine.getBytes());
+            fos.flush();
+        }
     }
 }

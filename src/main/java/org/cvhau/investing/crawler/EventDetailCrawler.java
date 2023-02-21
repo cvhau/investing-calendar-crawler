@@ -60,6 +60,7 @@ public class EventDetailCrawler {
 
         if (matcher.find()) {
             description = matcher.group(1);
+            description = description.replaceAll("<br\\s?/?>\\s*", "\n");
             description = description.replaceAll("<[^>]*>", "");
             description = description.replace("&#039;", "'");
             description = description.strip();
