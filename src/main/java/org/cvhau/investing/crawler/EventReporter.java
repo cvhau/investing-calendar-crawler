@@ -7,7 +7,7 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class EventSource {
+public class EventReporter {
     private String name;
     private String url;
 }

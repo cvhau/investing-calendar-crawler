@@ -144,9 +144,9 @@ public class EventListCrawler {
             event.getDetail().ifPresent(eventDetail -> {
                 System.out.printf("Detail Title: %s\n", eventDetail.getDetailTitle().orElse(""));
                 System.out.printf("Description: %s\n", eventDetail.getDescription().orElse(""));
-                EventSource eventSource = eventDetail.getSource().orElse(new EventSource("", ""));
-                System.out.printf("Source name: %s\n", eventSource.getName());
-                System.out.printf("Source URL: %s\n", eventSource.getUrl());
+                EventReporter eventReporter = eventDetail.getSource().orElse(new EventReporter("", ""));
+                System.out.printf("Source name: %s\n", eventReporter.getName());
+                System.out.printf("Source URL: %s\n", eventReporter.getUrl());
             });
 
             writeDataToCSV(event);

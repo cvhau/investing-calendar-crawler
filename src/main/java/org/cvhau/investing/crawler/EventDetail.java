@@ -12,7 +12,7 @@ import java.util.Optional;
 public class EventDetail {
     private String detailTitle;
     private String description;
-    private EventSource source;
+    private EventReporter source;
 
     public Optional<String> getDetailTitle() {
         return Optional.ofNullable(detailTitle);
@@ -22,7 +22,7 @@ public class EventDetail {
         return Optional.ofNullable(description);
     }
 
-    public Optional<EventSource> getSource() {
+    public Optional<EventReporter> getSource() {
         return Optional.ofNullable(source);
     }
 }

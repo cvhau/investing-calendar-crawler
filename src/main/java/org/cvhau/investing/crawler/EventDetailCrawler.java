@@ -69,14 +69,14 @@ public class EventDetailCrawler {
         return Optional.ofNullable(description);
     }
 
-    private Optional<EventSource> extractSource(String eventDetailHtml) {
+    private Optional<EventReporter> extractSource(String eventDetailHtml) {
         String regex = "Source:.*?<a.*?href=\"([^\"]+)\".+?title=\"([^\"]+)\"";
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(eventDetailHtml);
-        EventSource source = null;
+        EventReporter source = null;
 
         if (matcher.find()) {
-            source = new EventSource();
+            source = new EventReporter();
             source.setUrl(matcher.group(1));
             source.setName(matcher.group(2).strip());
         }
